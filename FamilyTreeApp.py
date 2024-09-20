@@ -159,13 +159,13 @@ class FamilyTreeApp:
         self.canvas.config(xscrollcommand=self.h_scroll.set, yscrollcommand=self.v_scroll.set)
 
         # Bind events for panning and zooming
-        self.canvas.bind("<ButtonPress-1>", self.on_pan_start)
-        self.canvas.bind("<B1-Motion>", self.on_pan_move)
-        self.canvas.bind("<MouseWheel>", self.on_zoom)  # Windows
-        self.canvas.bind("<Button-4>", self.on_zoom)    # Linux scroll up
-        self.canvas.bind("<Button-5>", self.on_zoom)    # Linux scroll down
+        self.canvas.bind("<ButtonPress-3>", self.on_pan_start)  # Right mouse button
+        self.canvas.bind("<B3-Motion>", self.on_pan_move)       # Right mouse button drag
+        self.canvas.bind("<MouseWheel>", self.on_zoom)         # Windows
+        self.canvas.bind("<Button-4>", self.on_zoom)           # Linux scroll up
+        self.canvas.bind("<Button-5>", self.on_zoom)           # Linux scroll down
 
-        # Bind click event
+        # Bind left-click event for selecting nodes
         self.canvas.bind("<Button-1>", self.on_canvas_click)
 
     def load_data(self):
@@ -217,6 +217,9 @@ class FamilyTreeApp:
             x, y = pos
             self.draw_node(member_id, x, y)
 
+        # Update the scroll region
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+
     def assign_generations(self):
         generations = {}
         # Simple algorithm: ancestors have lower generation numbers
@@ -254,10 +257,26 @@ class FamilyTreeApp:
 
     def draw_node(self, member_id, x, y):
         r = self.node_radius
-        oval = self.canvas.create_oval(x - r, y - r, x + r, y + r, fill="lightblue", outline="black", width=2)
+        tag = f"node_{member_id}"
+        
+        # Create oval with tag
+        oval = self.canvas.create_oval(
+            x - r, y - r, x + r, y + r,
+            fill="lightblue", outline="black", width=2,
+            tags=(tag,)
+        )
+        
+        # Create text with the same tag
         name = f"{self.members[member_id][1]} {self.members[member_id][3]}"
-        text = self.canvas.create_text(x, y, text=name, font=("Arial", 10, "bold"))
+        text = self.canvas.create_text(
+            x, y, text=name, font=("Arial", 10, "bold"),
+            tags=(tag,)
+        )
+        
         self.canvas_items[member_id] = (oval, text)
+        
+        # Bind the left-click event to the node's tag
+        self.canvas.tag_bind(tag, "<Button-1>", lambda event, m_id=member_id: self.show_member_details(m_id))
 
     def on_pan_start(self, event):
         self.canvas.scan_mark(event.x, event.y)
@@ -279,27 +298,23 @@ class FamilyTreeApp:
         else:
             scale = 1.0
 
-        # Get mouse position
-        x = self.canvas.canvasx(event.x)
-        y = self.canvas.canvasy(event.y)
+        # Limit the scale factor to prevent excessive zooming
+        new_scale = self.scale * scale
+        if 0.1 < new_scale < 10:
+            self.scale = new_scale
+            # Get mouse position
+            x = self.canvas.canvasx(event.x)
+            y = self.canvas.canvasy(event.y)
 
-        # Scale the canvas
-        self.canvas.scale("all", x, y, scale, scale)
-        self.scale *= scale
+            # Scale the canvas
+            self.canvas.scale("all", x, y, scale, scale)
+
+            # Optionally, adjust the scroll region
+            self.canvas.configure(scrollregion=self.canvas.bbox("all"))
 
     def on_canvas_click(self, event):
-        # Convert screen coordinates to canvas coordinates
-        x = self.canvas.canvasx(event.x)
-        y = self.canvas.canvasy(event.y)
-        clicked_member = None
-        for member_id, pos in self.node_positions.items():
-            node_x, node_y = pos
-            distance = math.sqrt((x - node_x) ** 2 + (y - node_y) ** 2)
-            if distance <= self.node_radius * self.scale:
-                clicked_member = member_id
-                break
-        if clicked_member:
-            self.show_member_details(clicked_member)
+        # Optional: Handle clicks on the canvas background if needed
+        pass
 
     def show_member_details(self, member_id):
         member = self.db.get_member(member_id)
