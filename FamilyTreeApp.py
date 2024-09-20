@@ -1,6 +1,6 @@
 import tkinter as tk
 from tkinter import messagebox, simpledialog
-from tkinter import ttk
+from tkinter import ttk  # Ensure ttk is imported
 import sqlite3
 import math
 
@@ -105,6 +105,22 @@ class Database:
         cursor = self.conn.cursor()
         cursor.execute('SELECT * FROM relationships')
         return cursor.fetchall()
+
+    # New method to get relationships of a specific member
+    def get_member_relationships(self, member_id):
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            SELECT relationship_id, member_id, relative_id, relationship_type
+            FROM relationships
+            WHERE member_id=? OR relative_id=?
+        ''', (member_id, member_id))
+        return cursor.fetchall()
+
+    # New method to delete a specific relationship
+    def delete_relationship(self, relationship_id):
+        cursor = self.conn.cursor()
+        cursor.execute('DELETE FROM relationships WHERE relationship_id=?', (relationship_id,))
+        self.conn.commit()
 
     def close(self):
         self.conn.close()
@@ -332,9 +348,39 @@ class FamilyTreeApp:
             value = member[idx+1] if member[idx+1] else ""
             tk.Label(details_window, text=value, wraplength=300, justify='left').grid(row=idx, column=1, sticky='w', padx=5, pady=2)
 
+        # Display Relationships
+        tk.Label(details_window, text="Relationships:", font=("Arial", 10, "bold")).grid(row=len(labels), column=0, sticky='ne', padx=5, pady=5)
+        
+        relationships_frame = tk.Frame(details_window)
+        relationships_frame.grid(row=len(labels), column=1, sticky='w', padx=5, pady=5)
+
+        # Fetch relationships where the member is either member_id or relative_id
+        relationships = self.db.get_member_relationships(member_id)
+
+        if relationships:
+            for idx, rel in enumerate(relationships):
+                rel_id, rel_member_id, rel_relative_id, rel_type = rel
+                # Determine the other member in the relationship
+                if rel_member_id == member_id:
+                    other_member = self.db.get_member(rel_relative_id)
+                else:
+                    other_member = self.db.get_member(rel_member_id)
+                if other_member:
+                    other_member_name = f"{other_member[1]} {other_member[3]}"
+                else:
+                    other_member_name = "Unknown"
+
+                rel_label = f"{rel_type} - {other_member_name}"
+                tk.Label(relationships_frame, text=rel_label).grid(row=idx, column=0, sticky='w')
+
+                # Delete button for each relationship
+                tk.Button(relationships_frame, text="Delete", command=lambda r_id=rel_id: self.delete_relationship(r_id, details_window)).grid(row=idx, column=1, padx=5, pady=2)
+        else:
+            tk.Label(relationships_frame, text="No relationships found.").grid(row=0, column=0, sticky='w')
+
         # Buttons
         button_frame = tk.Frame(details_window)
-        button_frame.grid(row=len(labels), column=0, columnspan=2, pady=10)
+        button_frame.grid(row=len(labels)+1, column=0, columnspan=2, pady=10)
 
         tk.Button(button_frame, text="Update Member", command=lambda: self.update_member_dialog(member_id, details_window)).pack(side=tk.LEFT, padx=5)
         tk.Button(button_frame, text="Delete Member", command=lambda: self.delete_member(member_id, details_window)).pack(side=tk.LEFT, padx=5)
@@ -375,6 +421,14 @@ class FamilyTreeApp:
         if dialog.result:
             member_id, relative_id, relationship_type = dialog.result
             self.db.add_relationship(member_id, relative_id, relationship_type)
+            self.load_data()
+            self.draw_tree()
+
+    def delete_relationship(self, relationship_id, parent_window):
+        confirm = messagebox.askyesno("Delete Relationship", "Are you sure you want to delete this relationship?")
+        if confirm:
+            self.db.delete_relationship(relationship_id)
+            parent_window.destroy()
             self.load_data()
             self.draw_tree()
 
@@ -452,42 +506,43 @@ class RelationshipDialog:
             self.top.destroy()
             return
 
-        member_options = [f"{m[0]}: {m[1]} {m[3]}" for m in members]
+        self.member_options = [f"{m[0]}: {m[1]} {m[3]}" for m in members]
         self.member_ids = {f"{m[0]}: {m[1]} {m[3]}": m[0] for m in members}
 
         if self.member_id:
-            # Pre-select the member
+            # Pre-select the member and disable editing
             member_info = self.db.get_member(self.member_id)
             member_option = f"{member_info[0]}: {member_info[1]} {member_info[3]}"
-            member_var = tk.StringVar(value=member_option)
-            member_menu = tk.OptionMenu(self.top, member_var, member_option)
-            member_menu.grid(row=0, column=1, padx=10, pady=5)
-            member_menu.config(state="disabled")
+            self.member_var = tk.StringVar(value=member_option)
+            member_combobox = ttk.Combobox(self.top, textvariable=self.member_var, values=[member_option], state="disabled")
+            member_combobox.grid(row=0, column=1, padx=10, pady=5)
         else:
-            member_var = tk.StringVar()
-            member_var.set(member_options[0])
-            tk.OptionMenu(self.top, member_var, *member_options).grid(row=0, column=1, padx=10, pady=5)
+            self.member_var = tk.StringVar()
+            member_combobox = ttk.Combobox(self.top, textvariable=self.member_var, values=self.member_options, state="readonly")
+            member_combobox.current(0)
+            member_combobox.grid(row=0, column=1, padx=10, pady=5)
 
-        relative_var = tk.StringVar()
-        if len(member_options) > 1:
-            relative_var.set(member_options[1])
+        self.relative_var = tk.StringVar()
+        relative_combobox = ttk.Combobox(self.top, textvariable=self.relative_var, values=self.member_options, state="readonly")
+        if len(self.member_options) > 1:
+            relative_combobox.current(1)
         else:
-            relative_var.set(member_options[0])
-        tk.OptionMenu(self.top, relative_var, *member_options).grid(row=1, column=1, padx=10, pady=5)
+            relative_combobox.current(0)
+        relative_combobox.grid(row=1, column=1, padx=10, pady=5)
 
         self.relationship_entry = tk.Entry(self.top, width=40)
         self.relationship_entry.grid(row=2, column=1, padx=10, pady=5)
 
-        tk.Button(self.top, text="Save", command=lambda: self.on_save(member_var, relative_var)).grid(row=3, column=0, columnspan=2, pady=10)
+        tk.Button(self.top, text="Save", command=self.on_save).grid(row=3, column=0, columnspan=2, pady=10)
 
-    def on_save(self, member_var, relative_var):
+    def on_save(self):
         if self.member_id:
             member_id = self.member_id
         else:
-            member_selection = member_var.get()
+            member_selection = self.member_var.get()
             member_id = self.member_ids.get(member_selection)
 
-        relative_selection = relative_var.get()
+        relative_selection = self.relative_var.get()
         relative_id = self.member_ids.get(relative_selection)
 
         relationship_type = self.relationship_entry.get().strip()
